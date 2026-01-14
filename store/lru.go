@@ -199,7 +199,105 @@ func (c *lruCache) cleanupLoop(){
 	}
 }
 
-
+//清楚过期和超出限制的缓存
 func (c* lruCache) evict(){
+	//优先清理过期
+	now := time.Now()
+	for key,expTime := range c.expires{
+		if now.After(expTime){ //现在的时间在expTime之后
+			if element,ok := c.items[key];ok{
+				c.removeElement(element)
+			}
+		}
+	}
 
+	//根据内存限制清理	
+	for c.maxBytes > 0 && c.usedBytes > c.maxBytes{
+		element := c.list.Front()
+		if element!=nil{
+			c.removeElement(element)
+		}
+	}
+}
+
+//获取缓存机器剩余剩余过期时间
+func (c *lruCache) GetWithExpiration(key string) (Value,time.Duration,bool){
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	element,ok := c.items[key]
+	if !ok {
+		return nil,0,false
+	}
+
+	//查看是否过期
+	now := time.Now();
+	if expTime,hasExp := c.expires[key];hasExp{
+		if now.After(expTime){
+			//已经过期
+			return nil,0,false
+		}
+
+		//计算剩余时间
+		remain := expTime.Sub(now)
+		c.list.MoveToBack(element) //最近使用过
+		return element.Value.value,remain,true
+	}
+
+	//没有过期时间
+	c.list.MoveToBack(element)
+	return element.Value.value,0,true
+}
+
+//获取某个键的过期时间
+func (c *lruCache) GetExpiration(key string) (time.Time,bool){
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	expTime,ok := c.expires[key]
+	return expTime,ok
+}
+
+//更新某个键的过期时间
+func (c *lruCache) UpdateExpiration(key string,expiration time.Duration) bool{
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _,ok := c.items[key]; !ok{
+		return false
+	}
+
+	if expiration > 0{ //0代表不设置超时时间
+		c.expires[key] = time.Now().Add(expiration)
+	}else{
+		delete(c.expires,key)
+	}
+
+	return true
+}
+
+//获取缓存当前使用的字节数
+func (c *lruCache) UsedBytes() int64{
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	return c.usedBytes
+}
+
+//获取最大容量
+func (c *lruCache) MaxBytes() int64{
+	c.mu.RLock()
+	defer c.mu.Unlock()
+	return c.maxBytes
+}
+
+//更新最大容量
+func (c *lruCache) SetMaxBytes(maxbytes int64){
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.maxBytes = maxbytes
+	if maxbytes > 0{
+		c.evict() //更新下lru链表，去掉超出容量和过期的数据
+	}
 }
