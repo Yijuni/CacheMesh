@@ -12,6 +12,7 @@ type lru2Store struct {
 	caches [][2]*cache //每个桶是两级缓存
 	onEvicted func(key string,value Value)
 	cleanupTicker *time.Ticker
+	closeCh chan struct{}
 	mask int32 //掩码计算桶索引
 }
 
@@ -337,6 +338,7 @@ func (s *lru2Store) Close(){
 	if s.cleanupTicker !=nil{
 		s.cleanupTicker.Stop()
 	}
+	close(s.closeCh)
 }
 func (s *lru2Store) delete(key string, idx int32) bool {
 	n1, s1, _ := s.caches[idx][0].del(key)
@@ -374,36 +376,42 @@ func (s *lru2Store) _get(key string, idx, level int32) (*node, int) {
 
 //定期清理过期数据的协程
 func (s *lru2Store) cleanupLoop(){
-	for range s.cleanupTicker.C{
-		currentTime := Now()
+	for {
+		select{
+		case <-s.cleanupTicker.C:{
+			currentTime := Now()
 
-		for i := range s.caches{
-			s.locks[i].Lock()
-
-			var expiredKeys []string
-
-			s.caches[i][0].walk(func(key string, value Value, expireAt int64) bool {
-				if expireAt>0 && expireAt <= currentTime{ //其实这里expireAt>0没必要判断了，因为walk里面会提前判断
-					expiredKeys = append(expiredKeys, key)
-				}
-				return true
-			})
-			s.caches[i][1].walk(func(key string, value Value, expireAt int64) bool {
-				if expireAt >0 && expireAt <= currentTime{
-					for _,k := range expiredKeys{ //已经存在
-						if(k==key){
-							return true
-						}
+			for i := range s.caches{
+				s.locks[i].Lock()
+	
+				var expiredKeys []string
+	
+				s.caches[i][0].walk(func(key string, value Value, expireAt int64) bool {
+					if expireAt>0 && expireAt <= currentTime{ //其实这里expireAt>0没必要判断了，因为walk里面会提前判断
+						expiredKeys = append(expiredKeys, key)
 					}
-					expiredKeys = append(expiredKeys, key)
+					return true
+				})
+				s.caches[i][1].walk(func(key string, value Value, expireAt int64) bool {
+					if expireAt >0 && expireAt <= currentTime{
+						for _,k := range expiredKeys{ //已经存在
+							if(k==key){
+								return true
+							}
+						}
+						expiredKeys = append(expiredKeys, key)
+					}
+					return true
+				})
+	
+				for _,k := range expiredKeys{
+					s.delete(k,int32(i))
 				}
-				return true
-			})
-
-			for _,k := range expiredKeys{
-				s.delete(k,int32(i))
+				s.locks[i].Unlock()
 			}
-			s.locks[i].Unlock()
+		}
+		case <-s.closeCh:
+			return
 		}
 	}
 }

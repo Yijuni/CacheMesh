@@ -1,0 +1,3 @@
+FAIL	run [setup failed]
+FAIL	BenchmarkLRU2StoreOperations [setup failed]
+FAIL
