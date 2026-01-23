@@ -225,7 +225,7 @@ func (c *Cache) Close(){
 }
 
 //status返回统计值
-func (c *Cache) Status() map[string]interface{}{
+func (c *Cache) Stats() map[string]interface{}{
 	status := map[string]interface{}{
 		"initialized": atomic.LoadInt32(&c.initialized) == 1,
 		"closed":      atomic.LoadInt32(&c.closed) == 1,
