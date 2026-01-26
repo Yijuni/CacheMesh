@@ -59,7 +59,7 @@ func WithEtcdEndpoints(endpoints []string) ServerOption{
 }
 
 //设置连接超时时间
-func WithDialTimeOut(timeout time.Duration) ServerOption{
+func WithDialTimeout(timeout time.Duration) ServerOption{
 	return func(o *ServerOptions) {
 		o.DialTimeout = timeout
 	}
@@ -112,7 +112,7 @@ func NewServer(addr, svcName string, opts ...ServerOption) (*Server,error){
 		opts: options,
 	}
 
-	//注册服务
+	//注册rpc服务
 	pb.RegisterCacheMeshServer(srv.grpcServer,srv)
 
 	//注册健康检查
@@ -165,7 +165,56 @@ func (s *Server) Stop(){
 	}
 }
 
+//需要把RPC需要的函数全部实现
+
 //实现Cache服务的Get方法
 func (s *Server) Get(ctx context.Context,req *pb.Request) (*pb.ResponseForGetSet,error){
+	group := GetGroup(req.Group)	
+	if group==nil{
+		return nil,fmt.Errorf("group %s not found", req.Group)
+	}
+
+	view,err := group.Get(ctx,req.Key)
+	if err !=nil{
+		return nil,err
+	}
+
+	return &pb.ResponseForGetSet{Value: view.ByteSlice()},nil
+}
+
+//实现Cache服务的Set方法
+func (s *Server) Set(ctx context.Context,req *pb.Request) (*pb.ResponseForGetSet, error){
+	group := GetGroup(req.Key)
+	if group==nil{
+		return nil, fmt.Errorf("group %s not found", req.Group)
+	}
+
+	//从context中获取标记，没有则创建（因为这个请求毕竟来自外界
+	fromPeer := ctx.Value("from_peer")
+	if fromPeer==nil{
+		ctx = context.WithValue(ctx,"from_peer",true)
+	}
+
+	if err := group.Set(ctx,req.Key,req.Value);err!=nil{
+		return nil,err
+	}
+
+	return &pb.ResponseForGetSet{Value: req.Value},nil
+}
+
+//实现Cacxhe服务的Delete方法
+func (s *Server) Delete(ctx context.Context,req *pb.Request)(*pb.ResponseForDelete, error){
+	group := GetGroup(req.Key)
+	if group==nil{
+		return nil, fmt.Errorf("group %s not found", req.Group)
+	}
+
+	//从context中获取标记，没有则创建（因为这个请求毕竟来自外界
+	fromPeer := ctx.Value("from_peer")
+	if fromPeer==nil{
+		ctx = context.WithValue(ctx,"from_peer",true)
+	}
 	
+	err :=  group.Delete(ctx,req.Key)
+	return &pb.ResponseForDelete{Value: err==nil},nil
 }
